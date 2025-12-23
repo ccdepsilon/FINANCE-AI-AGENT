@@ -63,7 +63,23 @@ try:
     from duckduckgo_search import DDGS
 except ImportError:
     from ddgs import DDGS
-
+from ddgs import DDGS
+ 
+# 1. HTTP/HTTPS代理
+ddgs_http = DDGS(proxy="http://username:password@proxy.example.com:8080")
+ 
+# 2. SOCKS5代理（常用Tor Browser代理）
+ddgs_socks5 = DDGS(proxy="socks5h://127.0.0.1:9150")
+ 
+# 3. 多代理列表（自动轮换，提高稳定性）
+ddgs_multi_proxy = DDGS(proxy=[
+    "http://proxy1.example.com:8080",
+    "socks5h://127.0.0.1:9150",
+    "http://proxy2.example.com:8080"
+])
+ 
+# 4. 设置超时时间（避免因网络问题长时间阻塞）
+ddgs_timeout = DDGS(timeout=20)  # 20秒超时
 # ================= 辅助函数 =================
 
 def call_qwen(prompt: str, model: str, system_prompt: str = None, history: List = None) -> str:
@@ -151,21 +167,10 @@ class AgentNews:
                 log_container.info("正在使用 DuckDuckGo 搜索新闻...")
                 results = []
                 ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=10)
-                log_container.info(ddgs_gen)
                 for r in ddgs_gen:
                     results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
                 search_context = "\n---\n".join(results)
                 if not ddgs_gen:
-                    from uapi import UapiClient
-                    from uapi.errors import UapiError
-
-                    client = UapiClient("https://uapis.cn")
-
-                    try:
-                        result = client.zhi_neng_sou_suo.post_search_aggregate(query=f"{stock_name} stock news analysis", fetch_full=False, timeout_ms=0)
-                        print(result)
-                    except UapiError as exc:
-                        print(f"API error: {exc}")
                     from googlesearch import search
                     log_container.warning("DuckDuckGo 搜索失败，尝试使用 Google 搜索...")
                     results = []
