@@ -161,6 +161,7 @@ class AgentNews:
                     # advanced=True 会返回包含标题、描述和链接的对象
                     # num_results 指定返回条数
                     search_results = search(f"{stock_name} stock news analysis", num_results=10, advanced=True)
+                    ddgs_gen = search_results
                     for item in search_results:
                         # 拼接成类似之前 DDGS 的格式
                         content = (
