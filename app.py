@@ -186,7 +186,7 @@ class AgentCoder:
         1. **数据源:** **禁止联网下载数据**。你必须读取本地 CSV 文件：`{current_csv_path}`。
            - 读取方法: `df = pd.read_csv(r'{current_csv_path}', index_col='Date', parse_dates=True)`
            - csv文件包括Date    Open	High	Low	Close	Volume	MA5	MA20	RSI	MACD	MACD_Signal	MACD_Hist	Boll_Upper	Boll_Lower	Boll_Width这些列
-        2. **任务:** 基于读取的数据进行分析或绘图（Agent B 指定的任务）。
+        2. **任务:** 基于读取的数据进行分析或绘图（Agent B 指定的任务），绘图时必须使用英文标题或标签。
         3. **路径:** 图片保存到 `{OUTPUT_DIR}`，文件名必须用英文。
         4. **反馈:** 保存图片后，执行 `print(f"IMAGE_SAVED: {{file_path}}")`。
         5. **禁止弹窗:** 不要使用 `plt.show()`。
@@ -260,7 +260,7 @@ class AgentOrchestrator:
         sop_guideline = f"""
         **SOP (标准作业程序):**
         1. **数据准备 (必须严格执行):**
-           - 第一步: 调用 `download_data` 获取原始数据(100days以上)。
+           - 第一步: 调用 `download_data` 获取原始数据(一年以上)。
            - 第二步: 调用 `feature_engineering` 计算技术指标 (MACD, RSI等)。
            - **注意:** 只有执行完这两步，才能进行后续分析。
         2. **深度分析 (灵活选择):**
@@ -342,7 +342,7 @@ class AgentOrchestrator:
                             for img in new_images:
                                 if img not in generated_images:
                                     generated_images.append(img)
-                                    # 这里不显示图片，统一在报告中显示
+                                    log_container.image(img, caption=os.path.basename(img), width=400)
                             
                             if "processed_path" in result:
                                 self.current_csv_path = result["processed_path"]
@@ -397,8 +397,8 @@ class AgentCIO:
         你是一名华尔街顶级对冲基金的首席投资官 (CIO)。你需要针对{target}撰写一份极具专业深度的投资研报。
         **核心原则 (图数融合):**
         1. **严禁只放图不说话。** 每一张插入的图表下方，必须紧跟一段深度分析。
-        2. **必须引用数据。** 当展示图表时，必须从日志中提取对应的具体数值 (如 R-squared, VaR, 准确率, 波动率) 来解释图表。
-        3. **逻辑自洽。**
+        2. **必须引用数据。** 你拥有量化分析师的完整运行日志。当展示图表时，必须从日志中提取对应的具体数值 (如 R-squared, VaR, 准确率, 波动率) 来解释图表。
+        3. **逻辑自洽。** 如果量化模型预测下跌，但新闻全是利好，你需要进行风险提示或通过逻辑权衡给出最终判断。
         """
         
         user_prompt = f"""
@@ -407,16 +407,32 @@ class AgentCIO:
         2. **量化分析日志:** {quant}
         3. **可用图表库:** {img_list_desc}
         
+        
         【任务目标】
         请撰写一份格式标准的 **《深度量化投资研报》**。
+        
         **研报结构要求:**
+        
         **第一部分：核心投资建议 (Executive Summary)**
-        - 评级、仓位建议、核心逻辑。
-        **第二部分：基本面与情报分析**
-        **第三部分：量化模型与技术分析**
+        - 给出明确评级：【强力买入 / 买入 / 持有 / 卖出】。
+        - 给出目标仓位建议 (0-100%)。
+        - 用一句话总结核心逻辑 (结合基本面和量化信号)。
+        
+        **第二部分：基本面与情报分析 (Fundamental Insight)**
+        - 基于新闻情报，分析公司的护城河、近期催化剂及宏观环境。
+        
+        **第三部分：量化模型与技术分析 (Quantitative & Technical Analysis)**
+        - **这是重点**。请根据提供的图表库，按逻辑顺序插入图表。
         - 引用格式: `[INSERT IMAGE: ./output/xxx.png]`
-        - 对于每一张图，必须结合“量化分析日志”中的数据进行解读。
-        **第四部分：尾部风险提示**
+        - **关键要求**: 对于每一张图，必须结合“量化分析日志”中的数据进行解读。
+          - *示例*: 插入 `monte_carlo.png` 后，必须写 "如图所示，通过1000次蒙特卡洛模拟，在95%置信度下的 VaR 为 -3.5%，表明下行风险可控..." (数据需来自日志)。
+          - *示例*: 插入 `rf_prediction.png` 后，必须写 "随机森林模型准确率达到 85%，特征重要性显示 '成交量' 是最关键的预测因子..."。
+        
+        **第四部分：尾部风险提示 (Risk Factors)**
+        - 结合分布检验 (Distribution Test) 或回撤数据，提示潜在风险。
+        
+        **其他你认为必要的部分（鼓励多写）**
+
         请开始撰写报告。输出 LaTeX 友好的纯文本。
         """
         res = call_qwen(user_prompt, model=MODEL_REASONING, system_prompt=system_prompt)
