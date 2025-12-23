@@ -151,16 +151,27 @@ class AgentNews:
                 log_container.info("正在使用 DuckDuckGo 搜索新闻...")
                 results = []
                 ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=10)
+                log_container.info(ddgs_gen)
                 for r in ddgs_gen:
                     results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
                 search_context = "\n---\n".join(results)
                 if not ddgs_gen:
+                    from uapi import UapiClient
+                    from uapi.errors import UapiError
+
+                    client = UapiClient("https://uapis.cn")
+
+                    try:
+                        result = client.zhi_neng_sou_suo.post_search_aggregate(query=f"{stock_name} stock news analysis", fetch_full=False, timeout_ms=0)
+                        print(result)
+                    except UapiError as exc:
+                        print(f"API error: {exc}")
                     from googlesearch import search
                     log_container.warning("DuckDuckGo 搜索失败，尝试使用 Google 搜索...")
                     results = []
                     # advanced=True 会返回包含标题、描述和链接的对象
                     # num_results 指定返回条数
-                    search_results = search(f"{stock_name} stock news analysis", num_results=50, advanced=True)
+                    search_results = search(f"{stock_name} stock news analysis", num_results=10, advanced=True)
                     ddgs_gen = search_results
                     for item in search_results:
                         # 拼接成类似之前 DDGS 的格式
