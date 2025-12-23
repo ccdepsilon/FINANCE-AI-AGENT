@@ -1,9 +1,9 @@
 streamlit
+dashscope
 pandas
 numpy
-akshare
-dashscope
-scikit-learn
 matplotlib
+scikit-learn
 statsmodels
-duckduckgo-search
+akshare
+duckduckgo_search>=5.0

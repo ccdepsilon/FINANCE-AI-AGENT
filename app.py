@@ -6,57 +6,34 @@ import subprocess
 import time
 import sys
 import warnings
+import pandas as pd
 from typing import List, Dict, Tuple
 import dashscope
 
-# ================= 页面配置 =================
+# --- Streamlit 页面配置 ---
 st.set_page_config(
-    page_title="AI 量化投资研报平台",
+    page_title="AI 量化投资研报生成器",
     page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# ================= 引入工具库 =================
-# 确保 tools.py 在同一目录下
+# --- 检查 tools.py ---
 try:
     import tools
 except ImportError:
-    st.error("【严重错误】未找到 tools.py 文件！请确保 tools.py 上传至同一目录。")
+    st.error("【严重错误】未找到 tools.py 文件！请确保将其上传到 GitHub 仓库根目录。")
     st.stop()
 
-# ================= 配置与初始化 =================
+# --- 配置区域 ---
 OUTPUT_DIR = "./output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 模型配置 (使用阿里云 Qwen)
-MODEL_SMART = "qwen-plus"           # 均衡模型，用于逻辑控制
-MODEL_REASONING = "qwen-max"        # 推理模型，用于写研报
-MODEL_CODER = "qwen-plus"           # 编程模型 (Coder 使用 Plus 稳定性较好)
+# 模型配置 (严格保持原样)
+MODEL_SMART = "qwen-plus-latest"
+MODEL_REASONING = "qwen3-max-2025-09-23"
+MODEL_CODER = "qwen3-coder-plus"
 
-# ----------------- 兼容性处理：DuckDuckGo -----------------
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
-try:
-    from duckduckgo_search import DDGS
-except ImportError:
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        DDGS = None
-
-# ================= 注册内置工具箱 =================
-# 将字符串指令映射到 tools.py 中的具体函数
-TOOL_REGISTRY = {
-    "download_data": tools.DataProcessor.download_us_stock,
-    "feature_engineering": tools.DataProcessor.add_technical_features,
-    "monte_carlo": tools.RiskEvaluator.run_monte_carlo,
-    "distribution_test": tools.RiskEvaluator.run_distribution_test,
-    "rf_prediction": tools.PricePredictor.run_rf_prediction,
-    "market_regime": tools.MarketRegime.run_kmeans_regime,
-    "seasonal_decomposition": tools.TimeSeriesMiner.run_seasonal_decomposition,
-    "linear_regression": tools.PricePredictor.run_regression
-}
-
+# 工具描述
 TOOL_DESCRIPTIONS = """
 **可用工具箱 (Built-in Tools):**
 1. `download_data(symbol, days)`: [必须第一步调用] 下载股票数据。返回 raw csv 路径。
@@ -68,7 +45,29 @@ TOOL_DESCRIPTIONS = """
 7. `seasonal_decomposition(df_path)`: 时间序列分解。
 """
 
-# ================= 基础 LLM 接口 =================
+# 注册工具
+TOOL_REGISTRY = {
+    "download_data": tools.DataProcessor.download_us_stock,
+    "feature_engineering": tools.DataProcessor.add_technical_features,
+    "monte_carlo": tools.RiskEvaluator.run_monte_carlo,
+    "distribution_test": tools.RiskEvaluator.run_distribution_test,
+    "rf_prediction": tools.PricePredictor.run_rf_prediction,
+    "market_regime": tools.MarketRegime.run_kmeans_regime,
+    "seasonal_decomposition": tools.TimeSeriesMiner.run_seasonal_decomposition,
+    "linear_regression": tools.PricePredictor.run_regression
+}
+
+# --- 兼容性处理 ---
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        DDGS = None
+
+# ================= 辅助函数 =================
 
 def call_qwen(prompt: str, model: str, system_prompt: str = None, history: List = None) -> str:
     """封装 DashScope API 调用"""
@@ -88,22 +87,39 @@ def call_qwen(prompt: str, model: str, system_prompt: str = None, history: List 
         if response.status_code == 200:
             return response.output.choices[0].message.content
         else:
-            st.error(f"API Error: {response.code} - {response.message}")
+            st.error(f"[API Error] Code: {response.code} - Message: {response.message}")
             return None
     except Exception as e:
-        st.error(f"API Exception: {e}")
+        st.error(f"[API Exception] {e}")
         return None
 
 def clean_code_block(text: str) -> str:
-    """提取 Markdown 中的 Python 代码块"""
     pattern = r"```python(.*?)```"
     match = re.search(pattern, text, re.DOTALL)
     if match:
         return match.group(1).strip()
     return text.strip()
 
+def extract_latex_content(text: str) -> str:
+    pattern_md = r"```latex(.*?)```"
+    match_md = re.search(pattern_md, text, re.DOTALL)
+    if match_md:
+        return match_md.group(1).strip()
+    
+    pattern_tex = r"(\\documentclass.*\\end{document})"
+    match_tex = re.search(pattern_tex, text, re.DOTALL)
+    if match_tex:
+        return match_tex.group(1).strip()
+        
+    lines = text.splitlines()
+    start_idx = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith(r"\documentclass"):
+            start_idx = i
+            break
+    return "\n".join(lines[start_idx:])
+
 def extract_json(text: str) -> Dict:
-    """从文本中提取 JSON 对象"""
     try:
         start = text.find('{')
         end = text.rfind('}') + 1
@@ -113,18 +129,17 @@ def extract_json(text: str) -> Dict:
         pass
     return None
 
-# =================各个 Agent 定义=================
+# ================= Agent 类 (UI 适配版) =================
 
 class AgentNews:
-    """Agent A: 文本情报分析师"""
     def run(self, stock_name: str, log_container):
-        log_container.markdown(f"**[Agent A]** 正在搜索关于 {stock_name} 的新闻...")
+        log_container.write(f"🕵️ **Agent A (情报)**: 正在搜索关于 {stock_name} 的新闻...")
         results = []
         
         mock_news = f"""
-        (注：网络搜索失败或API受限，使用模拟数据)
+        (注：网络搜索失败，使用模拟数据)
         1. {stock_name} 季度财报显示AI数据中心业务强劲增长，毛利率维持高位。
-        2. 行业竞争加剧，但 {stock_name} 凭借生态护城河依然稳固。
+        2. 行业竞争加剧，但 {stock_name} 凭借CUDA生态护城河依然稳固。
         3. 宏观层面，市场预期美联储降息利好科技成长股估值修复。
         """
 
@@ -132,9 +147,8 @@ class AgentNews:
             search_context = mock_news
         else:
             try:
-                # 尝试搜索，如果失败则回退
                 with DDGS() as ddgs:
-                    ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=5)
+                    ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=10)
                     if ddgs_gen:
                         for r in ddgs_gen:
                             results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
@@ -142,15 +156,18 @@ class AgentNews:
                     else:
                         search_context = mock_news
             except Exception as e:
-                log_container.warning(f"DuckDuckGo 搜索出现问题: {e}，使用模拟数据。")
+                log_container.warning(f"搜索 API 异常: {e}，使用模拟数据。")
                 search_context = mock_news
         
         system_prompt = "你是一名资深金融情报师。请总结核心利好、风险及市场情绪。直接输出文本。"
         res = call_qwen(search_context, model=MODEL_REASONING, system_prompt=system_prompt)
-        return res if res else "无法获取情报分析结果。"
+        final_res = res if res else "无法获取情报分析结果。"
+        log_container.success("情报分析完成。")
+        with log_container.expander("查看情报摘要"):
+            st.markdown(final_res)
+        return final_res
 
 class AgentCoder:
-    """Agent Coder: 负责写代码"""
     def run(self, requirement: str, current_csv_path: str, error_msg: str = None):
         if not current_csv_path:
             return "print('Error: 没有数据文件路径')"
@@ -159,12 +176,14 @@ class AgentCoder:
         你是一个Python专家。请编写代码完成需求。
         
         **严厉约束:**
-        1. **数据源:** 必须读取本地 CSV 文件：`{current_csv_path}`。
+        1. **数据源:** **禁止联网下载数据**。你必须读取本地 CSV 文件：`{current_csv_path}`。
            - 读取方法: `df = pd.read_csv(r'{current_csv_path}', index_col='Date', parse_dates=True)`
-        2. **路径:** 图片保存到 `{OUTPUT_DIR}`，文件名必须用英文。
-        3. **反馈:** 保存图片后，执行 `print(f"IMAGE_SAVED: {{file_path}}")`。
-        4. **禁止弹窗:** 不要使用 `plt.show()`。
-        5. **只输出代码块**。
+           - csv文件包括Date    Open	High	Low	Close	Volume	MA5	MA20	RSI	MACD	MACD_Signal	MACD_Hist	Boll_Upper	Boll_Lower	Boll_Width这些列
+        2. **任务:** 基于读取的数据进行分析或绘图（Agent B 指定的任务）。
+        3. **路径:** 图片保存到 `{OUTPUT_DIR}`，文件名必须用英文。
+        4. **反馈:** 保存图片后，执行 `print(f"IMAGE_SAVED: {{file_path}}")`。
+        5. **禁止弹窗:** 不要使用 `plt.show()`。
+        6. **只输出代码块**。
         """
         
         prompt = f"需求: {requirement}"
@@ -172,13 +191,11 @@ class AgentCoder:
             prompt += f"\n\n上次运行输出(含报错): {error_msg}"
             
         code_raw = call_qwen(prompt, model=MODEL_CODER, system_prompt=system_prompt)
-        return clean_code_block(code_raw) if code_raw else None
+        return clean_code_block(code_raw) if code_raw else "print('Error: API_CALL_FAILED')"
 
 class LocalExecutor:
-    """本地代码执行环境"""
     def execute(self, code: str):
         indented_code = "\n".join(["    " + line for line in code.splitlines()])
-        
         wrapper_script = f"""
 import sys
 import traceback
@@ -207,25 +224,18 @@ if __name__ == "__main__":
         try:
             result = subprocess.run(
                 [sys.executable, temp_file],
-                stdout=subprocess.PIPE,     
-                stderr=subprocess.STDOUT,   
-                text=True,
-                timeout=60,
-                encoding='utf-8',
-                errors='ignore'
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,   
+                text=True, timeout=60, encoding='utf-8', errors='ignore'
             )
             output = result.stdout
-            
             if "<<EXECUTION_SUCCESS>>" in output:
-                clean_output = output.replace("<<EXECUTION_SUCCESS>>", "")
-                return True, clean_output
+                return True, output.replace("<<EXECUTION_SUCCESS>>", "")
             else:
                 return False, output
         except Exception as e:
             return False, str(e)
 
 class AgentOrchestrator:
-    """Agent B: 核心编排器"""
     def __init__(self):
         self.coder = AgentCoder()
         self.executor = LocalExecutor()
@@ -235,42 +245,56 @@ class AgentOrchestrator:
         self.has_called_coder = False
     
     def run(self, stock_code: str, goal: str, log_container) -> Tuple[str, List[str]]:
-        log_container.markdown(f"### [Agent B] 开始深度分析流程: {stock_code}")
-        
+        log_container.write(f"🧠 **Agent B (指挥官)**: 开始执行 SOP 分析流程...")
         generated_images = []
         max_turns = 10
         tool_used = []
-
+        
         sop_guideline = f"""
-        **SOP:**
-        1. 必须先调用 `download_data`。
-        2. 必须接着调用 `feature_engineering`。
-        3. 之后自由使用工具分析，至少3次。
-        4. 必须至少调用一次 `call_coder` 进行定制绘图。
-        **可用工具:** {TOOL_DESCRIPTIONS}
+        **SOP (标准作业程序):**
+        1. **数据准备 (必须严格执行):**
+           - 第一步: 调用 `download_data` 获取原始数据(100days以上)。
+           - 第二步: 调用 `feature_engineering` 计算技术指标 (MACD, RSI等)。
+           - **注意:** 只有执行完这两步，才能进行后续分析。
+        2. **深度分析 (灵活选择):**
+           - 选择可用工具中你认为有必要的各类函数进行分析获取结论，至少调用三次，鼓励更多次调用，不要反复调用使用过的工具。
+        3. **定制绘图 (必须执行):**
+           - 至少调用一次 `call_coder`，鼓励多次调用，让程序员进行可用工具外的分析并返回结论（如绘制收盘价趋势图、计算并绘制 MACD 或 均线、计算 RSI 或 波动率、绘制收盘价与MA20的对比图，或者特定的成交量分析）。
+        
+        **可用工具:**
+        {TOOL_DESCRIPTIONS}
         """
 
+        progress_bar = log_container.progress(0, text="初始化 Agent B...")
+
         for turn in range(max_turns):
-            # 状态提示
+            progress_bar.progress((turn + 1) / max_turns, text=f"Agent B 思考中 (轮次 {turn+1}/{max_turns})...")
+            
             status_hint = ""
             if not self.current_csv_path:
-                status_hint = "【当前状态: 无数据】请调用 download_data。"
+                status_hint = "【当前状态: 无数据】你必须先调用 `download_data`。"
             elif not self.is_processed:
-                status_hint = f"【当前状态: 有原始数据】请调用 feature_engineering。"
+                status_hint = f"【当前状态: 有原始数据 {self.current_csv_path}】你必须调用 `feature_engineering` 进行处理。"
             else:
-                status_hint = f"【当前状态: 数据就绪】请选择分析工具或 call_coder。"
+                status_hint = f"【当前状态: 数据就绪 {self.current_csv_path}】请选择高级分析工具，或者调用 Coder。"
+                if not self.has_called_coder:
+                    status_hint += " (记得：你还没有调用过 Coder，必须调用一次)"
 
+            history_str = json.dumps(self.memory[-5:], indent=2, ensure_ascii=False)
             system_prompt = f"""你是一名量化策略分析师。
             {sop_guideline}
-            已用工具: {tool_used}
+            你已经使用过的工具有{tool_used}。
             {status_hint}
-            **输出 JSON:** {{ "thought": "...", "action": "call_tool" | "call_coder" | "finish", "content": {{...}} }}
+            **输出 JSON:** {{ 
+                "thought": "思考当前步骤...", 
+                "action": "call_tool" | "call_coder" | "finish", 
+                "content": {{ "tool_name": "...", "params": {{...}} }} 或 "Coder的自然语言需求" 
+            }}
             """
-            
-            user_prompt = f"目标: {goal}\n轮次: {turn+1}/{max_turns}\n已生成图表: {generated_images}"
+            user_prompt = f"目标: {goal}\n轮次: {turn+1}/{max_turns}\n已生成图表: {generated_images}\n记忆: {history_str}"
             
             response_raw = call_qwen(user_prompt, model=MODEL_SMART, system_prompt=system_prompt)
-            if not response_raw: continue
+            if response_raw is None: continue 
             
             decision = extract_json(response_raw)
             if not decision: continue
@@ -279,19 +303,19 @@ class AgentOrchestrator:
             action = decision.get('action')
             content = decision.get('content')
             
-            log_container.info(f"Step {turn+1}: {thought}")
-            
+            log_container.info(f"👉 **Step {turn+1}**: {thought}")
+
             if action == "finish":
-                if self.is_processed and self.has_called_coder:
-                    return str(self.memory), generated_images
-                else:
-                    log_container.warning("系统提示：流程未完成，强制继续。")
+                if not self.is_processed or not self.has_called_coder:
+                     self.memory.append({"role": "System", "content": "驳回：SOP未完成(需数据处理+至少一次Coder)。"})
+                     continue
+                progress_bar.empty()
+                return str(self.memory), generated_images
             
             elif action == "call_tool":
                 tool_name = content.get("tool_name")
                 tool_used.append(tool_name)
                 params = content.get("params", {})
-                
                 if "df_path" not in params and self.current_csv_path:
                     params["df_path"] = self.current_csv_path
                 
@@ -299,185 +323,231 @@ class AgentOrchestrator:
                 if func:
                     try:
                         result = func(**params)
-                        # 处理结果
+                        # 兼容处理: 某些旧函数可能返回字符串路径
+                        if isinstance(result, str):
+                            if os.path.exists(result):
+                                self.current_csv_path = result
+                                result = {"status": "success", "summary": "File saved", "images": [], "processed_path": result}
+                        
                         if isinstance(result, dict) and result.get("status") == "success":
-                            log_container.success(f"工具 {tool_name} 执行成功")
-                            
-                            # 更新图片
-                            for img in result.get("images", []):
+                            log_container.caption(f"🔧 工具执行成功: {result.get('summary')[:100]}...")
+                            new_images = result.get("images", [])
+                            for img in new_images:
                                 if img not in generated_images:
                                     generated_images.append(img)
-                                    st.image(img, caption=os.path.basename(img))
+                                    log_container.image(img, caption=os.path.basename(img), width=400)
                             
-                            # 更新路径
                             if "processed_path" in result:
                                 self.current_csv_path = result["processed_path"]
                                 self.is_processed = True
-                            elif tool_name == "download_data" and "processed_path" in result:
-                                self.current_csv_path = result["processed_path"]
-
-                            self.memory.append({"role": "Agent B", "action": tool_name, "result": result.get("summary")})
+                            
+                            self.memory.append({"role": "Agent B", "action": "call_tool", "tool": tool_name})
+                            self.memory.append({"role": "System", "result": result.get("summary", "Done")})
                         else:
-                            log_container.error(f"工具报错: {result}")
-                            self.memory.append({"role": "System", "result": f"Error: {result}"})
+                             err = result.get("error") if isinstance(result, dict) else "Unknown error"
+                             log_container.error(f"工具报错: {err}")
+                             self.memory.append({"role": "System", "result": f"Tool Error: {err}"})
                     except Exception as e:
                         log_container.error(f"执行异常: {e}")
             
             elif action == "call_coder":
-                if not self.current_csv_path:
-                    log_container.warning("无数据，无法写代码。")
-                    continue
-                
                 self.has_called_coder = True
-                log_container.markdown(f"Wait... Coder 正在绘图: {content}")
+                code_success = False
+                retry = 0
+                error_log = None
+                log_container.caption(f"💻 调用程序员编写: {content}")
                 
-                # 简单重试机制
-                for _ in range(2):
-                    code = self.coder.run(content, self.current_csv_path)
-                    if code:
-                        success, output = self.executor.execute(code)
-                        if success:
-                            log_container.success("Coder 代码执行成功")
-                            img_matches = re.findall(r"IMAGE_SAVED:\s*(.*?.png)", output)
-                            for img in img_matches:
-                                path = img.strip()
-                                if path not in generated_images:
-                                    generated_images.append(path)
-                                    st.image(path, caption="Coder Generated")
-                            self.memory.append({"role": "Coder", "request": content, "result": "Success"})
-                            break
-                        else:
-                            log_container.warning(f"Coder 执行报错，重试中... \n{output[:100]}")
-                            
-        return str(self.memory), generated_images
+                while not code_success and retry < 3:
+                    code = self.coder.run(content, self.current_csv_path, error_msg=error_log)
+                    success, output = self.executor.execute(code)
+                    
+                    if success:
+                        code_success = True
+                        img_matches = re.findall(r"IMAGE_SAVED:\s*(.*?.png)", output)
+                        for img in img_matches:
+                            path = img.strip()
+                            if path not in generated_images:
+                                generated_images.append(path)
+                                log_container.image(path, caption="Coder Generated", width=400)
+                        self.memory.append({"role": "Agent B", "action": "call_coder", "request": content})
+                        self.memory.append({"role": "System", "result": f"Output: {output[:200]}..."})
+                    else:
+                        retry += 1
+                        error_log = output
+                        log_container.warning(f"代码运行失败，正在重试 ({retry}/3)...")
+                
+                if not code_success:
+                    self.memory.append({"role": "System", "result": f"Failed: {error_log}"})
+
+        return "分析强制结束。", generated_images
 
 class AgentCIO:
-    """Agent E: 首席投资官 (Markdown 报告版)"""
-    def run(self, news, quant, images, target):
-        # 准备图片描述列表
-        img_list_desc = "\n".join([f"- {os.path.basename(p)}" for p in images])
+    def run(self, news, quant, images, log_container):
+        log_container.write("👔 **Agent E (CIO)**: 正在撰写深度研报...")
+        img_list_desc = "\n".join([f"- {os.path.basename(p)}: {p}" for p in images])
         
         system_prompt = """
-        你是一名首席投资官 (CIO)。请针对{target}撰写一份极具专业深度的投资研报。
-        
-        **输出格式要求:**
-        1. 使用标准的 **Markdown** 格式。
-        2. 使用一级标题 `#` 表示报告题目，二级标题 `##` 表示章节。
-        3. **严禁只放图不说话**。报告中提到图表时，必须结合【量化日志】中的具体数据进行分析。
-        4. 不需要生成 LaTeX 代码，直接生成易于阅读的 Markdown 文本。
+        你是一名华尔街顶级对冲基金的首席投资官 (CIO)。你需要针对{target}撰写一份极具专业深度的投资研报。
+        **核心原则 (图数融合):**
+        1. **严禁只放图不说话。** 每一张插入的图表下方，必须紧跟一段深度分析。
+        2. **必须引用数据。** 当展示图表时，必须从日志中提取对应的具体数值 (如 R-squared, VaR, 准确率, 波动率) 来解释图表。
+        3. **逻辑自洽。**
         """
         
         user_prompt = f"""
-        【市场情报】
-        {news}
+        【输入数据】
+        1. **市场情报:** {news}
+        2. **量化分析日志:** {quant}
+        3. **可用图表库:** {img_list_desc}
         
-        【量化日志 (包含具体数值)】
-        {quant}
+        【任务目标】
+        请撰写一份格式标准的 **《深度量化投资研报》**。
+        **研报结构要求:**
+        **第一部分：核心投资建议 (Executive Summary)**
+        - 评级、仓位建议、核心逻辑。
+        **第二部分：基本面与情报分析**
+        **第三部分：量化模型与技术分析**
+        - 引用格式: `[INSERT IMAGE: ./output/xxx.png]`
+        - 对于每一张图，必须结合“量化分析日志”中的数据进行解读。
+        **第四部分：尾部风险提示**
+        请开始撰写报告。输出 LaTeX 友好的纯文本。
+        """
+        res = call_qwen(user_prompt, model=MODEL_REASONING, system_prompt=system_prompt)
+        return res if res else "生成报告失败。"
+
+class AgentLatex:
+    def __init__(self):
+        self.compiler = LatexCompiler()
+    
+    def run(self, text, images, log_container):
+        log_container.write("📝 **Agent F (排版)**: 正在生成 LaTeX 代码并尝试编译...")
+        img_filenames = [os.path.basename(p) for p in images]
+        img_context = ", ".join(img_filenames)
         
-        【已生成图表列表】
-        {img_list_desc}
-        
-        【任务】
-        请撰写《深度量化投资研报》，结构如下：
-        1. **核心投资建议** (评级、仓位、一句话逻辑)
-        2. **基本面与情报分析**
-        3. **量化模型与技术分析** (这是重点。请在文中适当位置提及相关图表，例如"（参考图表：macd.png）"，并详细解读数据)
-        4. **尾部风险提示**
-        
-        请开始撰写。
+        base_system_prompt = f"""
+        你是LaTeX排版专家。请将金融研报转换为 `article` 类代码。
+        **必须遵守的工程规范:**
+        1. **宏包:** 必须包含: `\\usepackage[UTF8]{{ctex}}`, `\\usepackage{{graphicx}}`, `\\usepackage{{geometry}}`, `\\usepackage{{float}}`。
+        2. **特殊字符转义:** 下划线 `_` 转 `\\_`，百分号 `%` 转 `\\%`。
+        3. **图片插入:** 只能使用文件名: {img_context}，语法模板:
+             \\begin{{figure}}[H]
+             \\centering
+             \\includegraphics[width=0.8\\linewidth]{{FILENAME.png}} 
+             \\caption{{图表说明}}
+             \\end{{figure}}
+        4. **输出:** 只输出 LaTeX 源码。
         """
         
-        res = call_qwen(user_prompt, model=MODEL_REASONING, system_prompt=system_prompt)
-        return res
+        prompt = f"转换内容:\n{text}"
+        response = call_qwen(prompt, model=MODEL_SMART, system_prompt=base_system_prompt)
+        if not response: return None
+        
+        current_code = extract_latex_content(response)
+        success, message = self.compiler.compile(current_code, OUTPUT_DIR)
+        
+        if success:
+            log_container.success("PDF 编译成功！")
+            return current_code, True, os.path.join(OUTPUT_DIR, "report.pdf")
+        else:
+            log_container.warning(f"PDF 编译失败 (可能是云端环境缺少 XeLaTeX): {message[:100]}...")
+            return current_code, False, None
 
-# ================= Streamlit 主界面逻辑 =================
+class LatexCompiler:
+    def compile(self, tex_code: str, output_dir: str = "./output"):
+        abs_output_dir = os.path.abspath(output_dir)
+        tex_filename = "report.tex"
+        tex_file_path = os.path.join(abs_output_dir, tex_filename)
+        
+        with open(tex_file_path, "w", encoding="utf-8") as f:
+            f.write(tex_code)
+            
+        try:
+            cmd = ["xelatex", "-interaction=nonstopmode", tex_filename]
+            result = subprocess.run(
+                cmd, cwd=abs_output_dir,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=60, encoding='utf-8', errors='ignore'
+            )
+            if result.returncode == 0:
+                return True, "Success"
+            else:
+                return False, result.stdout
+        except Exception as e:
+            return False, str(e)
+
+# ================= 主流程 =================
 
 def main():
-    # 侧边栏配置
+    st.title("🤖 AI Agent Financial Analyst System")
+    st.markdown("---")
+
+    # Sidebar: 配置
     with st.sidebar:
-        st.header("⚙️ 参数设置")
-        
-        # 优先读取 secrets，如果没有则显示输入框
-        default_key = ""
-        if "DASHSCOPE_API_KEY" in st.secrets:
-            default_key = st.secrets["DASHSCOPE_API_KEY"]
-            st.success("✅ API Key 已通过 Secrets 加载")
-        
-        api_key = st.text_input("DashScope API Key", value=default_key, type="password")
+        st.header("Settings")
+        api_key = st.text_input("DashScope API Key", value=st.secrets.get("DASHSCOPE_API_KEY", ""), type="password")
         if api_key:
             dashscope.api_key = api_key
-            
-        st.divider()
-        stock_symbol = st.text_input("美股代码 (Symbol)", value="NVDA", help="例如: NVDA, TSLA, AAPL")
-        target_name = st.text_input("公司名称", value="英伟达", help="用于生成报告标题")
         
-        st.divider()
-        st.caption("支持模型: Qwen-Plus, Qwen-Max")
-        run_btn = st.button("🚀 开始 AI 全流程分析", type="primary", use_container_width=True)
-
-    # 主区域
-    st.title("🤖 AI Agent 深度研报生成器")
-    st.markdown("""
-    > 本系统通过多 Agent 协作模拟专业投研流程：
-    > 1. **Agent A (情报)**: 搜集全网新闻与情绪。
-    > 2. **Agent B (量化)**: 调用 Python 工具箱进行回测、蒙特卡洛模拟与归因分析。
-    > 3. **Agent Coder**: 编写自定义代码绘制图表。
-    > 4. **Agent E (CIO)**: 汇总数据撰写深度研报。
-    """)
-    
-    st.divider()
+        target = st.text_input("目标股票 (Target Stock)", value="NVDA")
+        run_btn = st.button("🚀 启动分析 (Start Analysis)", type="primary")
+        
+        st.info("说明：本系统使用多智能体架构 (News -> Quant -> Coder -> CIO) 生成深度研报。")
 
     if run_btn:
         if not api_key:
-            st.warning("⚠️ 请先在侧边栏输入 DashScope API Key。")
-            return
-
-        # 创建主容器
-        main_container = st.container()
-        
-        # --- 阶段 1: 情报搜集 ---
-        with st.status("🕵️ [阶段 1/3] Agent A: 正在搜集情报...", expanded=True) as status:
-            agent_a = AgentNews()
-            news = agent_a.run(target_name, st)
-            st.text_area("情报摘要", news, height=100)
-            status.update(label="✅ Agent A: 情报搜集完成", state="complete", expanded=False)
-
-        # --- 阶段 2: 量化分析 ---
-        with st.status("📊 [阶段 2/3] Agent B: 执行量化分析流程...", expanded=True) as status:
-            agent_b = AgentOrchestrator()
-            quant_res, images = agent_b.run(stock_symbol, f"分析 {stock_symbol} 的趋势、风险与统计特征", st)
-            status.update(label="✅ Agent B: 量化分析结束", state="complete", expanded=False)
+            st.error("请先输入 DashScope API Key！")
+            st.stop()
             
-        if not images:
-            st.error("❌ 分析过程中未能生成有效图表，无法继续生成报告。")
-            return
-
-        # --- 阶段 3: 撰写报告 ---
-        with st.status("✍️ [阶段 3/3] Agent E: 正在撰写深度研报...", expanded=True) as status:
-            agent_e = AgentCIO()
-            report_md = agent_e.run(news, quant_res, images, target_name)
-            status.update(label="✅ Agent E: 研报撰写完成", state="complete", expanded=False)
-
-        # --- 最终展示 ---
+        # 容器化显示日志
+        status_container = st.status("正在运行 AI 分析流程...", expanded=True)
+        
+        # 1. 搜集情报
+        agent_a = AgentNews()
+        news = agent_a.run(target, status_container)
+        
+        # 2. 量化分析
+        agent_b = AgentOrchestrator()
+        quant_res, images = agent_b.run(target, f"分析 {target}。SOP: 1.下载数据 2.计算特征 3.风险分析 4.绘制定制图表", status_container)
+        
+        # 3. 决策
+        agent_e = AgentCIO()
+        report_text = agent_e.run(news, quant_res, images, status_container)
+        
+        # 4. 排版
+        agent_f = AgentLatex()
+        latex_code, pdf_success, pdf_path = agent_f.run(report_text, images, status_container)
+        
+        status_container.update(label="✅ 分析完成！", state="complete", expanded=False)
+        
+        # --- 结果展示区 ---
         st.divider()
-        st.header(f"📑 {target_name} 深度投资研报")
+        st.header(f"📊 {target} 深度投资研报")
         
-        # 使用 Tabs 分开展示报告文本和图表画廊
-        tab_report, tab_gallery = st.tabs(["📄 分析报告", "🖼️ 图表画廊"])
+        tab1, tab2, tab3 = st.tabs(["📄 研报全文 (Markdown)", "🖼️ 生成图表", "💾 下载资源"])
         
-        with tab_report:
-            st.markdown(report_md)
+        with tab1:
+            # 简单处理 Markdown 中的图片引用，使其在 Streamlit 显示
+            # 将 [INSERT IMAGE: ./output/xxx.png] 替换为空，因为图表在 Tab2 展示，或者可以直接渲染
+            display_text = report_text
+            st.markdown(display_text)
             
-        with tab_gallery:
-            st.info("以下是本次分析生成的关键图表：")
+        with tab2:
             cols = st.columns(2)
             for i, img_path in enumerate(images):
                 with cols[i % 2]:
-                    # 确保路径存在
                     if os.path.exists(img_path):
-                        st.image(img_path, caption=os.path.basename(img_path), use_container_width=True)
-                    else:
-                        st.warning(f"图片丢失: {img_path}")
+                        st.image(img_path, caption=os.path.basename(img_path))
+        
+        with tab3:
+            st.subheader("下载选项")
+            if pdf_success and pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    st.download_button("⬇️ 下载 PDF 研报", f, file_name=f"{target}_report.pdf", mime="application/pdf")
+            else:
+                st.warning("由于云端环境限制，PDF 编译失败。您可以下载 LaTeX 源码在本地编译。")
+            
+            st.download_button("⬇️ 下载 LaTeX 源码", latex_code, file_name=f"{target}_report.tex")
+            st.download_button("⬇️ 下载 Markdown 源码", report_text, file_name=f"{target}_report.md")
 
 if __name__ == "__main__":
     main()
