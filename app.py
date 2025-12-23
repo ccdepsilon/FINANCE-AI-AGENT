@@ -178,7 +178,7 @@ class AgentNews:
                         }
 
                         response = requests.post(url, headers=headers, data=payload)
-
+                        ddgs_gen = response
                         if response.status_code == 200:
                             data = response.json()
                             # Serper 的普通搜索结果在 'organic' 列表中
