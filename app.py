@@ -62,10 +62,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_se
 try:
     from duckduckgo_search import DDGS
 except ImportError:
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        DDGS = None
+    from ddgs import DDGS
 
 # ================= 辅助函数 =================
 
@@ -142,29 +139,36 @@ class AgentNews:
     def run(self, stock_name: str, log_container):
         log_container.write(f"🕵️ **Agent A (情报)**: 正在搜索关于 {stock_name} 的新闻...")
         results = []
-        
-        mock_news = f"""
-        (注：网络搜索失败，使用模拟数据)
-        1. {stock_name} 季度财报显示AI数据中心业务强劲增长，毛利率维持高位。
-        2. 行业竞争加剧，但 {stock_name} 凭借CUDA生态护城河依然稳固。
-        3. 宏观层面，市场预期美联储降息利好科技成长股估值修复。
-        """
 
-        if DDGS is None:
-            search_context = mock_news
-        else:
-            try:
-                with DDGS() as ddgs:
-                    ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=10)
-                    if ddgs_gen:
-                        for r in ddgs_gen:
-                            results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
+        with DDGS() as ddgs:
+            ddgs_gen = None
+            count = 0
+            while not ddgs_gen:
+                count += 1
+                if count > 3:
+                    log_container.error("多次尝试搜索均失败。")
+                    sys.exit(1)
+                log_container.info("正在使用 DuckDuckGo 搜索新闻...")
+                results = []
+                ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=10)
+                for r in ddgs_gen:
+                    results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
+                search_context = "\n---\n".join(results)
+                if not ddgs_gen:
+                    from googlesearch import search
+                    log_container.warning("DuckDuckGo 搜索失败，尝试使用 Google 搜索...")
+                    results = []
+                    # advanced=True 会返回包含标题、描述和链接的对象
+                    # num_results 指定返回条数
+                    search_results = search(f"{stock_name} stock news analysis", num_results=10, advanced=True)
+                    for item in search_results:
+                        # 拼接成类似之前 DDGS 的格式
+                        content = (
+                            f"Title: {item.title}\n"
+                            f"Snippet: {item.description}\n"
+                        )
+                        results.append(content)
                         search_context = "\n---\n".join(results)
-                    else:
-                        search_context = mock_news
-            except Exception as e:
-                log_container.warning(f"搜索 API 异常: {e}，使用模拟数据。")
-                search_context = mock_news
         
         system_prompt = "你是一名资深金融情报师。请总结核心利好、风险及市场情绪。直接输出文本。"
         res = call_qwen(search_context, model=MODEL_REASONING, system_prompt=system_prompt)
