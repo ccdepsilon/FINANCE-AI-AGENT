@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import json
 import re
+import requests
 import subprocess
 import time
 import sys
@@ -63,18 +64,7 @@ try:
     from duckduckgo_search import DDGS
 except ImportError:
     from ddgs import DDGS
- 
-# 1. HTTP/HTTPS代理
-ddgs_http = DDGS(proxy="http://username:password@proxy.example.com:8080")
- 
-# 2. SOCKS5代理（常用Tor Browser代理）
-ddgs_socks5 = DDGS(proxy="socks5h://127.0.0.1:9150")
- 
-# 3. 多代理列表（自动轮换，提高稳定性）
-ddgs_multi_proxy = DDGS(proxy="http://proxy1.example.com:8080")
- 
-# 4. 设置超时时间（避免因网络问题长时间阻塞）
-ddgs_timeout = DDGS(timeout=20)  # 20秒超时
+
 # ================= 辅助函数 =================
 
 def call_qwen(prompt: str, model: str, system_prompt: str = None, history: List = None) -> str:
@@ -166,22 +156,47 @@ class AgentNews:
                     results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
                 search_context = "\n---\n".join(results)
                 if not ddgs_gen:
-                    from googlesearch import search
-                    log_container.warning("DuckDuckGo 搜索失败，尝试使用 Google 搜索...")
-                    results = []
-                    # advanced=True 会返回包含标题、描述和链接的对象
-                    # num_results 指定返回条数
-                    search_results = search(f"{stock_name} stock news analysis", num_results=10, advanced=True)
-                    ddgs_gen = search_results
-                    for item in search_results:
-                        # 拼接成类似之前 DDGS 的格式
-                        content = (
-                            f"Title: {item.title}\n"
-                            f"Snippet: {item.description}\n"
-                        )
-                        results.append(content)
-                        search_context = "\n---\n".join(results)
-        
+                    # 这里的 serper_api_key 需要你提前定义或从环境变量读取
+                    serper_api_key = "f6ae770b4865a03061057b8fc3721ebeeefc61de" 
+                    
+                    search_context = None
+                    count = 0
+
+                    log_container.info("正在使用 Serper.dev 搜索新闻...")
+                    
+                    try:
+                        url = "https://google.serper.dev/search"
+                        # tbs="qdr:w" 对应原代码的 timelimit='w' (过去一周)
+                        payload = json.dumps({
+                            "q": f"{stock_name} stock news analysis",
+                            "num": 10,
+                            "tbs": "qdr:w" 
+                        })
+                        headers = {
+                            'X-API-KEY': serper_api_key,
+                            'Content-Type': 'application/json'
+                        }
+
+                        response = requests.post(url, headers=headers, data=payload)
+
+                        if response.status_code == 200:
+                            data = response.json()
+                            # Serper 的普通搜索结果在 'organic' 列表中
+                            items = data.get("organic", [])
+                            
+                            results = []
+                            for r in items:
+                                # 对应原代码格式: Title + Snippet (原 body)
+                                results.append(f"Title: {r.get('title')}\nSnippet: {r.get('snippet')}")
+                            
+                            search_context = "\n---\n".join(results)
+                            success = True # 标记成功，用于跳出循环
+                        else:
+                            log_container.warning(f"Serper API 返回错误: {response.status_code}")
+                    
+                    except Exception as e:
+                        log_container.warning(f"搜索请求发生异常: {e}")
+                
         system_prompt = "你是一名资深金融情报师。请总结核心利好、风险及市场情绪。直接输出文本。"
         res = call_qwen(search_context, model=MODEL_REASONING, system_prompt=system_prompt)
         final_res = res if res else "无法获取情报分析结果。"
