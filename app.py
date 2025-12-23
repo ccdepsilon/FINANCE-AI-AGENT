@@ -63,7 +63,6 @@ try:
     from duckduckgo_search import DDGS
 except ImportError:
     from ddgs import DDGS
-from ddgs import DDGS
  
 # 1. HTTP/HTTPS代理
 ddgs_http = DDGS(proxy="http://username:password@proxy.example.com:8080")
