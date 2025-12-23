@@ -503,7 +503,7 @@ def main():
         if api_key:
             dashscope.api_key = api_key
         
-        target = st.text_input("目标股票 (Target Stock)", value="拼多多")
+        target = st.text_input("目标股票 (Target Stock)", value="NVIDIA")
         run_btn = st.button("🚀 启动分析 (Start Analysis)", type="primary")
         
         st.info("说明：本系统使用多智能体架构 (News -> Quant -> Coder -> CIO) 生成深度研报。")
