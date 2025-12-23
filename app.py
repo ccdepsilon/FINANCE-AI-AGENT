@@ -373,7 +373,7 @@ class AgentOrchestrator:
                             for img in new_images:
                                 if img not in generated_images:
                                     generated_images.append(img)
-                                    log_container.image(img, caption=os.path.basename(img), width=400)
+                                    log_container.image(img, caption=os.path.basename(img), width=300)
                             
                             if "processed_path" in result:
                                 self.current_csv_path = result["processed_path"]
@@ -406,6 +406,7 @@ class AgentOrchestrator:
                             path = img.strip()
                             if path not in generated_images:
                                 generated_images.append(path)
+                                log_container.image(img, caption=os.path.basename(img), width=300)
                         self.memory.append({"role": "Agent B", "action": "call_coder", "request": content})
                         self.memory.append({"role": "System", "result": f"Output: {output[:200]}..."})
                     else:
