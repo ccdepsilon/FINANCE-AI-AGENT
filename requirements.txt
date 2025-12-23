@@ -7,4 +7,4 @@ scikit-learn
 statsmodels
 akshare
 duckduckgo_search>=5.0
-googlesearch
+googlesearch-python
