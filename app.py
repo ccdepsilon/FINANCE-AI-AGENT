@@ -100,25 +100,6 @@ def clean_code_block(text: str) -> str:
         return match.group(1).strip()
     return text.strip()
 
-def extract_latex_content(text: str) -> str:
-    pattern_md = r"```latex(.*?)```"
-    match_md = re.search(pattern_md, text, re.DOTALL)
-    if match_md:
-        return match_md.group(1).strip()
-    
-    pattern_tex = r"(\\documentclass.*\\end{document})"
-    match_tex = re.search(pattern_tex, text, re.DOTALL)
-    if match_tex:
-        return match_tex.group(1).strip()
-        
-    lines = text.splitlines()
-    start_idx = 0
-    for i, line in enumerate(lines):
-        if line.strip().startswith(r"\documentclass"):
-            start_idx = i
-            break
-    return "\n".join(lines[start_idx:])
-
 def extract_json(text: str) -> Dict:
     try:
         start = text.find('{')
@@ -128,6 +109,32 @@ def extract_json(text: str) -> Dict:
     except:
         pass
     return None
+
+def render_with_images(text: str):
+    """
+    解析文本中的 [INSERT IMAGE: path] 标记，实现图文混排显示
+    """
+    # 1. 使用正则表达式分割文本，保留分隔符（即图片标记）
+    # 模式匹配: [INSERT IMAGE: ./output/xxx.png]
+    pattern = r"(\[INSERT IMAGE: .*?\])"
+    parts = re.split(pattern, text)
+
+    for part in parts:
+        # 检查是否是图片标记
+        img_match = re.match(r"\[INSERT IMAGE: (.*?)\]", part)
+        if img_match:
+            img_path = img_match.group(1).strip()
+            # 清理路径中的 ./output/ 前缀（因为 st.image 最好用相对路径或绝对路径，这里做个防御性处理）
+            # Streamlit Cloud 中，./output/xxx.png 是可以的
+            if os.path.exists(img_path):
+                # 显示图片
+                st.image(img_path, caption=os.path.basename(img_path), use_container_width=True)
+            else:
+                st.warning(f"⚠️ 图片未找到: {img_path}")
+        else:
+            # 如果是普通文本，直接渲染 Markdown
+            if part.strip():
+                st.markdown(part)
 
 # ================= Agent 类 (UI 适配版) =================
 
@@ -253,7 +260,7 @@ class AgentOrchestrator:
         sop_guideline = f"""
         **SOP (标准作业程序):**
         1. **数据准备 (必须严格执行):**
-           - 第一步: 调用 `download_data` 获取原始数据(一年以上)。
+           - 第一步: 调用 `download_data` 获取原始数据(100days以上)。
            - 第二步: 调用 `feature_engineering` 计算技术指标 (MACD, RSI等)。
            - **注意:** 只有执行完这两步，才能进行后续分析。
         2. **深度分析 (灵活选择):**
@@ -335,7 +342,7 @@ class AgentOrchestrator:
                             for img in new_images:
                                 if img not in generated_images:
                                     generated_images.append(img)
-                                    log_container.image(img, caption=os.path.basename(img), width=400)
+                                    # 这里不显示图片，统一在报告中显示
                             
                             if "processed_path" in result:
                                 self.current_csv_path = result["processed_path"]
@@ -368,7 +375,6 @@ class AgentOrchestrator:
                             path = img.strip()
                             if path not in generated_images:
                                 generated_images.append(path)
-                                log_container.image(path, caption="Coder Generated", width=400)
                         self.memory.append({"role": "Agent B", "action": "call_coder", "request": content})
                         self.memory.append({"role": "System", "result": f"Output: {output[:200]}..."})
                     else:
@@ -386,6 +392,7 @@ class AgentCIO:
         log_container.write("👔 **Agent E (CIO)**: 正在撰写深度研报...")
         img_list_desc = "\n".join([f"- {os.path.basename(p)}: {p}" for p in images])
         
+        # 保持原 Prompt 不变
         system_prompt = """
         你是一名华尔街顶级对冲基金的首席投资官 (CIO)。你需要针对{target}撰写一份极具专业深度的投资研报。
         **核心原则 (图数融合):**
@@ -415,80 +422,41 @@ class AgentCIO:
         res = call_qwen(user_prompt, model=MODEL_REASONING, system_prompt=system_prompt)
         return res if res else "生成报告失败。"
 
-class AgentLatex:
-    def __init__(self):
-        self.compiler = LatexCompiler()
-    
+class AgentMarkdown:
+    """Agent F: Markdown 排版专家"""
     def run(self, text, images, log_container):
-        log_container.write("📝 **Agent F (排版)**: 正在生成 LaTeX 代码并尝试编译...")
-        img_filenames = [os.path.basename(p) for p in images]
-        img_context = ", ".join(img_filenames)
+        log_container.write("📝 **Agent F (排版)**: 正在进行 Markdown 排版优化...")
         
-        base_system_prompt = f"""
-        你是LaTeX排版专家。请将金融研报转换为 `article` 类代码。
-        **必须遵守的工程规范:**
-        1. **宏包:** 必须包含: `\\usepackage[UTF8]{{ctex}}`, `\\usepackage{{graphicx}}`, `\\usepackage{{geometry}}`, `\\usepackage{{float}}`。
-        2. **特殊字符转义:** 下划线 `_` 转 `\\_`，百分号 `%` 转 `\\%`。
-        3. **图片插入:** 只能使用文件名: {img_context}，语法模板:
-             \\begin{{figure}}[H]
-             \\centering
-             \\includegraphics[width=0.8\\linewidth]{{FILENAME.png}} 
-             \\caption{{图表说明}}
-             \\end{{figure}}
-        4. **输出:** 只输出 LaTeX 源码。
-        """
+        # 简单优化：确保图片路径格式统一，适合下载保存
+        # 将 [INSERT IMAGE: ...] 转换为标准 Markdown 图片语法 ![Image](path) 方便用户下载md文件后查看
+        # 但为了 Streamlit 的图文混排显示，我们主要依赖原始的 [INSERT IMAGE: ...] 标记进行切分
         
-        prompt = f"转换内容:\n{text}"
-        response = call_qwen(prompt, model=MODEL_SMART, system_prompt=base_system_prompt)
-        if not response: return None
-        
-        current_code = extract_latex_content(response)
-        success, message = self.compiler.compile(current_code, OUTPUT_DIR)
-        
-        if success:
-            log_container.success("PDF 编译成功！")
-            return current_code, True, os.path.join(OUTPUT_DIR, "report.pdf")
-        else:
-            log_container.warning(f"PDF 编译失败 (可能是云端环境缺少 XeLaTeX): {message[:100]}...")
-            return current_code, False, None
-
-class LatexCompiler:
-    def compile(self, tex_code: str, output_dir: str = "./output"):
-        abs_output_dir = os.path.abspath(output_dir)
-        tex_filename = "report.tex"
-        tex_file_path = os.path.join(abs_output_dir, tex_filename)
-        
-        with open(tex_file_path, "w", encoding="utf-8") as f:
-            f.write(tex_code)
+        # 生成一个供下载的纯 Markdown 版本
+        downloadable_md = text
+        for img_path in images:
+            filename = os.path.basename(img_path)
+            # 替换标记为标准 MD 语法
+            # 注意：下载后图片通常和md在同一目录，所以去掉 ./output/
+            placeholder = f"[INSERT IMAGE: {img_path}]"
+            md_image = f"\n![{filename}]({filename})\n" 
+            downloadable_md = downloadable_md.replace(placeholder, md_image)
             
-        try:
-            cmd = ["xelatex", "-interaction=nonstopmode", tex_filename]
-            result = subprocess.run(
-                cmd, cwd=abs_output_dir,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=60, encoding='utf-8', errors='ignore'
-            )
-            if result.returncode == 0:
-                return True, "Success"
-            else:
-                return False, result.stdout
-        except Exception as e:
-            return False, str(e)
+        return text, downloadable_md
 
 # ================= 主流程 =================
 
 def main():
-    st.title("🤖 AI Agent Financial Analyst System")
+    st.title("🤖 AI Agent Financial Analyst System (Markdown Edition)")
     st.markdown("---")
 
     # Sidebar: 配置
     with st.sidebar:
         st.header("Settings")
-        api_key = st.text_input("DashScope API Key", value=st.secrets.get("DASHSCOPE_API_KEY", ""), type="password")
+        api_key = st.secrets.get("DASHSCOPE_API_KEY", "")
         if api_key:
             dashscope.api_key = api_key
         
-        target = st.text_input("目标股票 (Target Stock)", value="NVDA")
+        target = st.text_input("目标股票 (Target Stock)", value="拼多多")
         run_btn = st.button("🚀 启动分析 (Start Analysis)", type="primary")
         
         st.info("说明：本系统使用多智能体架构 (News -> Quant -> Coder -> CIO) 生成深度研报。")
@@ -498,7 +466,6 @@ def main():
             st.error("请先输入 DashScope API Key！")
             st.stop()
             
-        # 容器化显示日志
         status_container = st.status("正在运行 AI 分析流程...", expanded=True)
         
         # 1. 搜集情报
@@ -511,11 +478,12 @@ def main():
         
         # 3. 决策
         agent_e = AgentCIO()
-        report_text = agent_e.run(news, quant_res, images, status_container)
+        raw_report = agent_e.run(news, quant_res, images, status_container)
         
-        # 4. 排版
-        agent_f = AgentLatex()
-        latex_code, pdf_success, pdf_path = agent_f.run(report_text, images, status_container)
+        # 4. 排版 (Markdown)
+        agent_f = AgentMarkdown()
+        # raw_report 用于页面渲染 (保留标记), final_md 用于下载 (标准MD语法)
+        display_report, download_report = agent_f.run(raw_report, images, status_container)
         
         status_container.update(label="✅ 分析完成！", state="complete", expanded=False)
         
@@ -523,31 +491,18 @@ def main():
         st.divider()
         st.header(f"📊 {target} 深度投资研报")
         
-        tab1, tab2, tab3 = st.tabs(["📄 研报全文 (Markdown)", "🖼️ 生成图表", "💾 下载资源"])
+        # 使用自定义渲染函数，实现图文混排
+        render_with_images(display_report)
         
-        with tab1:
-            # 简单处理 Markdown 中的图片引用，使其在 Streamlit 显示
-            # 将 [INSERT IMAGE: ./output/xxx.png] 替换为空，因为图表在 Tab2 展示，或者可以直接渲染
-            display_text = report_text
-            st.markdown(display_text)
-            
-        with tab2:
-            cols = st.columns(2)
-            for i, img_path in enumerate(images):
-                with cols[i % 2]:
-                    if os.path.exists(img_path):
-                        st.image(img_path, caption=os.path.basename(img_path))
-        
-        with tab3:
-            st.subheader("下载选项")
-            if pdf_success and pdf_path and os.path.exists(pdf_path):
-                with open(pdf_path, "rb") as f:
-                    st.download_button("⬇️ 下载 PDF 研报", f, file_name=f"{target}_report.pdf", mime="application/pdf")
-            else:
-                st.warning("由于云端环境限制，PDF 编译失败。您可以下载 LaTeX 源码在本地编译。")
-            
-            st.download_button("⬇️ 下载 LaTeX 源码", latex_code, file_name=f"{target}_report.tex")
-            st.download_button("⬇️ 下载 Markdown 源码", report_text, file_name=f"{target}_report.md")
+        st.divider()
+        st.subheader("💾 下载报告")
+        st.download_button(
+            label="⬇️ 下载 Markdown 源码 (包含图片引用)",
+            data=download_report,
+            file_name=f"{target}_report.md",
+            mime="text/markdown"
+        )
+        st.info("提示：下载 .md 文件后，请确保图片文件（在 output 文件夹中）与 .md 文件在同一目录下，以正常显示图片。")
 
 if __name__ == "__main__":
     main()
