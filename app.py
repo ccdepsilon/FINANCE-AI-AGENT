@@ -71,11 +71,7 @@ ddgs_http = DDGS(proxy="http://username:password@proxy.example.com:8080")
 ddgs_socks5 = DDGS(proxy="socks5h://127.0.0.1:9150")
  
 # 3. 多代理列表（自动轮换，提高稳定性）
-ddgs_multi_proxy = DDGS(proxy=[
-    "http://proxy1.example.com:8080",
-    "socks5h://127.0.0.1:9150",
-    "http://proxy2.example.com:8080"
-])
+ddgs_multi_proxy = DDGS(proxy="http://proxy1.example.com:8080")
  
 # 4. 设置超时时间（避免因网络问题长时间阻塞）
 ddgs_timeout = DDGS(timeout=20)  # 20秒超时
