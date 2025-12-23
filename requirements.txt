@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+akshare
+dashscope
+scikit-learn
+matplotlib
+statsmodels
+duckduckgo-search
