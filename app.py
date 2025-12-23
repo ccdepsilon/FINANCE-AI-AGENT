@@ -253,7 +253,7 @@ class AgentOrchestrator:
         sop_guideline = f"""
         **SOP (标准作业程序):**
         1. **数据准备 (必须严格执行):**
-           - 第一步: 调用 `download_data` 获取原始数据(100days以上)。
+           - 第一步: 调用 `download_data` 获取原始数据(一年以上)。
            - 第二步: 调用 `feature_engineering` 计算技术指标 (MACD, RSI等)。
            - **注意:** 只有执行完这两步，才能进行后续分析。
         2. **深度分析 (灵活选择):**
