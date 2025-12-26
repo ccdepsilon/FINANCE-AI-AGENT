@@ -373,7 +373,7 @@ class AgentOrchestrator:
                             for img in new_images:
                                 if img not in generated_images:
                                     generated_images.append(img)
-                                    log_container.image(img, caption=os.path.basename(img), width=300)
+                                    log_container.image(img, caption=os.path.basename(img), width=500)
                             
                             if "processed_path" in result:
                                 self.current_csv_path = result["processed_path"]
@@ -397,6 +397,7 @@ class AgentOrchestrator:
                 
                 while not code_success and retry < 3:
                     code = self.coder.run(content, self.current_csv_path, error_msg=error_log)
+                    log_container.caption("🚀 正在执行代码...")
                     success, output = self.executor.execute(code)
                     
                     if success:
@@ -406,7 +407,7 @@ class AgentOrchestrator:
                             path = img.strip()
                             if path not in generated_images:
                                 generated_images.append(path)
-                                log_container.image(img, caption=os.path.basename(img), width=300)
+                                log_container.image(img, caption=os.path.basename(img), width=500)
                         self.memory.append({"role": "Agent B", "action": "call_coder", "request": content})
                         self.memory.append({"role": "System", "result": f"Output: {output[:200]}..."})
                     else:
@@ -494,7 +495,7 @@ class AgentMarkdown:
 # ================= 主流程 =================
 
 def main():
-    st.title("🤖 AI Agent Financial Analyst System (Markdown Edition)")
+    st.title("🤖 基于多智能体协作的上市公司多维度自动化研报生成系统（陈长道 弓望涛 刘小淅 温欣）")
     st.markdown("---")
 
     # Sidebar: 配置
