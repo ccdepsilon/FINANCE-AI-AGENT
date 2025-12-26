@@ -151,7 +151,7 @@ class AgentNews:
                     sys.exit(1)
                 log_container.info("正在使用 DuckDuckGo 搜索新闻...")
                 results = []
-                ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=10)
+                ddgs_gen = ddgs.text(f"{stock_name} stock news analysis", region='wt-wt', timelimit='w', max_results=20)
                 for r in ddgs_gen:
                     results.append(f"Title: {r['title']}\nSnippet: {r['body']}")
                 search_context = "\n---\n".join(results)
@@ -169,7 +169,7 @@ class AgentNews:
                         # tbs="qdr:w" 对应原代码的 timelimit='w' (过去一周)
                         payload = json.dumps({
                             "q": f"{stock_name} stock news analysis",
-                            "num": 10,
+                            "num": 20,
                             "tbs": "qdr:w" 
                         })
                         headers = {
