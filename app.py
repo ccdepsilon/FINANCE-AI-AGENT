@@ -422,7 +422,7 @@ class AgentOrchestrator:
 
 class AgentCIO:
     def run(self, news, quant, images, log_container):
-        log_container.write("👔 **Agent E (CIO)**: 正在撰写深度研报...")
+        log_container.write("👔 **Agent E (CIO)**: 正在撰写深度研报（可能需要一段时间）...")
         img_list_desc = "\n".join([f"- {os.path.basename(p)}: {p}" for p in images])
         
         # 保持原 Prompt 不变
@@ -474,7 +474,7 @@ class AgentCIO:
 class AgentMarkdown:
     """Agent F: Markdown 排版专家"""
     def run(self, text, images, log_container):
-        log_container.write("📝 **Agent F (排版)**: 正在进行 Markdown 排版优化...")
+        log_container.write("📝 **Agent F (排版)**: 正在进行 Markdown 排版优化（可能需要一段时间）...")
         
         # 简单优化：确保图片路径格式统一，适合下载保存
         # 将 [INSERT IMAGE: ...] 转换为标准 Markdown 图片语法 ![Image](path) 方便用户下载md文件后查看
@@ -495,7 +495,7 @@ class AgentMarkdown:
 # ================= 主流程 =================
 
 def main():
-    st.title("🤖 基于多智能体协作的上市公司多维度自动化研报生成系统")
+    st.title("🤖 基于多智能体协作的上市公司多维度自动化研报生成系统（必须是美股！！）")
     st.markdown("---")
 
     # Sidebar: 配置
@@ -544,14 +544,6 @@ def main():
         render_with_images(display_report)
         
         st.divider()
-        st.subheader("💾 下载报告")
-        st.download_button(
-            label="⬇️ 下载 Markdown 源码 (包含图片引用)",
-            data=download_report,
-            file_name=f"{target}_report.md",
-            mime="text/markdown"
-        )
-        st.info("提示：下载 .md 文件后，请确保图片文件（在 output 文件夹中）与 .md 文件在同一目录下，以正常显示图片。")
 
 if __name__ == "__main__":
     main()
