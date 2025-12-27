@@ -472,7 +472,7 @@ class AgentCIO:
         return res if res else "生成报告失败。"
 
 class AgentMarkdown:
-    """Agent F: Markdown 排版专家"""
+    """Agent F: markdown 排版专家"""
     def run(self, text, images, log_container):
         log_container.write("📝 **Agent F (排版)**: 正在进行 Markdown 排版优化（可能需要一段时间）...")
         
