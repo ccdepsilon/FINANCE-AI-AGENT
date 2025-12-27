@@ -543,7 +543,15 @@ def main():
         # 使用自定义渲染函数，实现图文混排
         render_with_images(display_report)
         
-        st.divider()
+        # st.divider()
+        # st.subheader("💾 下载报告")
+        # st.download_button(
+        #     label="⬇️ 下载 Markdown 源码 (包含图片引用)",
+        #     data=download_report,
+        #     file_name=f"{target}_report.md",
+        #     mime="text/markdown"
+        # )
+        # st.info("提示：下载 .md 文件后，请确保图片文件（在 output 文件夹中）与 .md 文件在同一目录下，以正常显示图片。")
 
 if __name__ == "__main__":
     main()
