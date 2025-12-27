@@ -471,6 +471,27 @@ class AgentCIO:
         res = call_qwen(user_prompt, model=MODEL_REASONING, system_prompt=system_prompt)
         return res if res else "生成报告失败。"
 
+class AgentMarkdown:
+    """Agent F: Markdown 排版专家"""
+    def run(self, text, images, log_container):
+        log_container.write("📝 **Agent F (排版)**: 正在进行 Markdown 排版优化（可能需要一段时间）...")
+        
+        # 简单优化：确保图片路径格式统一，适合下载保存
+        # 将 [INSERT IMAGE: ...] 转换为标准 Markdown 图片语法 ![Image](path) 方便用户下载md文件后查看
+        # 但为了 Streamlit 的图文混排显示，我们主要依赖原始的 [INSERT IMAGE: ...] 标记进行切分
+        
+        # 生成一个供下载的纯 Markdown 版本
+        downloadable_md = text
+        for img_path in images:
+            filename = os.path.basename(img_path)
+            # 替换标记为标准 MD 语法
+            # 注意：下载后图片通常和md在同一目录，所以去掉 ./output/
+            placeholder = f"[INSERT IMAGE: {img_path}]"
+            md_image = f"\n![{filename}]({filename})\n" 
+            downloadable_md = downloadable_md.replace(placeholder, md_image)
+            
+        return text, downloadable_md
+
 # ================= 主流程 =================
 
 def main():
@@ -508,6 +529,11 @@ def main():
         agent_e = AgentCIO()
         raw_report = agent_e.run(news, quant_res, images, status_container)
         
+        # 4. 排版 (Markdown)
+        agent_f = AgentMarkdown()
+        # raw_report 用于页面渲染 (保留标记), final_md 用于下载 (标准MD语法)
+        display_report, download_report = agent_f.run(raw_report, images, status_container)
+        
         status_container.update(label="✅ 分析完成！", state="complete", expanded=False)
         
         # --- 结果展示区 ---
@@ -515,7 +541,17 @@ def main():
         st.header(f"📊 {target} 深度投资研报")
         
         # 使用自定义渲染函数，实现图文混排
-        render_with_images(raw_report)
+        render_with_images(display_report)
+        
+        st.divider()
+        st.subheader("💾 下载报告")
+        st.download_button(
+            label="⬇️ 下载 Markdown 源码 (包含图片引用)",
+            data=download_report,
+            file_name=f"{target}_report.md",
+            mime="text/markdown"
+        )
+        st.info("提示：下载 .md 文件后，请确保图片文件（在 output 文件夹中）与 .md 文件在同一目录下，以正常显示图片。")
 
 if __name__ == "__main__":
     main()
